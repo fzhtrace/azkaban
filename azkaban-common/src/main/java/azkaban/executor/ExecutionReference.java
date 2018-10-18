@@ -16,68 +16,61 @@
 
 package azkaban.executor;
 
+import java.util.Optional;
+import javax.annotation.Nullable;
+
 public class ExecutionReference {
+
   private final int execId;
   private Executor executor;
+  //Todo jamiesjc: deprecate updateTime in ExecutionReference class gradually.
   private long updateTime;
   private long nextCheckTime = -1;
   private int numErrors = 0;
 
 
-  public ExecutionReference(int execId) {
+  public ExecutionReference(final int execId) {
     this.execId = execId;
   }
 
-  public ExecutionReference(int execId, Executor executor) {
-    if (executor == null) {
-      throw new IllegalArgumentException(String.format(
-        "Executor cannot be null for exec id: %d ExecutionReference", execId));
-    }
+  public ExecutionReference(final int execId, @Nullable final Executor executor) {
     this.execId = execId;
     this.executor = executor;
-  }
-
-  public void setUpdateTime(long updateTime) {
-    this.updateTime = updateTime;
-  }
-
-  public void setNextCheckTime(long nextCheckTime) {
-    this.nextCheckTime = nextCheckTime;
   }
 
   public long getUpdateTime() {
-    return updateTime;
+    return this.updateTime;
+  }
+
+  public void setUpdateTime(final long updateTime) {
+    this.updateTime = updateTime;
   }
 
   public long getNextCheckTime() {
-    return nextCheckTime;
+    return this.nextCheckTime;
+  }
+
+  public void setNextCheckTime(final long nextCheckTime) {
+    this.nextCheckTime = nextCheckTime;
   }
 
   public int getExecId() {
-    return execId;
-  }
-
-  public String getHost() {
-    return executor.getHost();
-  }
-
-  public int getPort() {
-    return executor.getPort();
+    return this.execId;
   }
 
   public int getNumErrors() {
-    return numErrors;
+    return this.numErrors;
   }
 
-  public void setNumErrors(int numErrors) {
+  public void setNumErrors(final int numErrors) {
     this.numErrors = numErrors;
   }
 
-  public void setExecutor(Executor executor) {
-    this.executor = executor;
+  public Optional<Executor> getExecutor() {
+    return Optional.ofNullable(this.executor);
   }
 
-  public Executor getExecutor() {
-    return executor;
+  public void setExecutor(final @Nullable Executor executor) {
+    this.executor = executor;
   }
 }

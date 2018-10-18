@@ -1,5 +1,5 @@
 #!/bin/bash
 
-base_dir=$(dirname $0)/..
+script_dir=$(dirname $0)
 
-bin/azkaban-web-start.sh $base_dir 2>&1>logs/webServerLog_`date +%F+%T`.out &
+${script_dir}/internal/internal-start-web.sh >webServerLog_`date +%F+%T`.out 2>&1 &

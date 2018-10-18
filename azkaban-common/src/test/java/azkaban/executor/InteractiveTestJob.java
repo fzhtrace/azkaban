@@ -16,96 +16,176 @@
 
 package azkaban.executor;
 
-import java.util.concurrent.ConcurrentHashMap;
-
-import org.apache.log4j.Logger;
+import static azkaban.flow.CommonJobProperties.JOB_ATTEMPT;
+import static org.junit.Assert.assertNotNull;
 
 import azkaban.flow.CommonJobProperties;
 import azkaban.jobExecutor.AbstractProcessJob;
 import azkaban.utils.Props;
+import java.io.File;
+import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
+import org.apache.log4j.Logger;
 
 public class InteractiveTestJob extends AbstractProcessJob {
-  private static ConcurrentHashMap<String, InteractiveTestJob> testJobs =
-      new ConcurrentHashMap<String, InteractiveTestJob>();
-  private Props generatedProperties = new Props();
-  private boolean isWaiting = true;
-  private boolean succeed = true;
 
-  public static InteractiveTestJob getTestJob(String name) {
-    return testJobs.get(name);
+  public static final String JOB_ID_PREFIX = "InteractiveTestJob.jobIdPrefix";
+  private static final ConcurrentHashMap<String, InteractiveTestJob> testJobs =
+      new ConcurrentHashMap<>();
+  private static volatile boolean quickSuccess = false;
+  private Props generatedProperties = new Props();
+  private volatile boolean isWaiting = true;
+  private volatile boolean succeed = true;
+  private boolean ignoreCancel = false;
+
+  public InteractiveTestJob(final String jobId, final Props sysProps, final Props jobProps,
+      final Logger log) {
+    super(jobId, sysProps, jobProps, log);
+  }
+
+  public static InteractiveTestJob getTestJob(final String name) {
+    for (int i = 0; i < 1000; i++) {
+      if (testJobs.containsKey(name)) {
+        return testJobs.get(name);
+      }
+      synchronized (testJobs) {
+        try {
+          InteractiveTestJob.testJobs.wait(10L);
+        } catch (final InterruptedException e) {
+          i--;
+        }
+      }
+    }
+    throw new IllegalStateException(name + " wasn't added in testJobs map");
+  }
+
+  public static Collection<String> getTestJobNames() {
+    return testJobs.keySet();
   }
 
   public static void clearTestJobs() {
     testJobs.clear();
   }
 
-  public InteractiveTestJob(String jobId, Props sysProps, Props jobProps,
-      Logger log) {
-    super(jobId, sysProps, jobProps, log);
+  public static void clearTestJobs(final String... names) {
+    for (final String name : names) {
+      assertNotNull(testJobs.remove(name));
+    }
+  }
+
+  public static void setQuickSuccess(final boolean quickSuccess) {
+    InteractiveTestJob.quickSuccess = quickSuccess;
+  }
+
+  public static void resetQuickSuccess() {
+    InteractiveTestJob.quickSuccess = false;
   }
 
   @Override
   public void run() throws Exception {
-    String nestedFlowPath =
+    final File[] propFiles = initPropsFiles();
+    final String nestedFlowPath =
         this.getJobProps().get(CommonJobProperties.NESTED_FLOW_PATH);
-    String groupName = this.getJobProps().getString("group", null);
+    final String jobIdPrefix = this.getJobProps().getString(JOB_ID_PREFIX, null);
     String id = nestedFlowPath == null ? this.getId() : nestedFlowPath;
-    if (groupName != null) {
-      id = groupName + ":" + id;
+    if (jobIdPrefix != null) {
+      id = jobIdPrefix + ":" + id;
     }
     testJobs.put(id, this);
+    synchronized (testJobs) {
+      testJobs.notifyAll();
+    }
+    if (quickSuccess) {
+      return;
+    }
 
-    while (isWaiting) {
+    if (this.jobProps.getBoolean("fail", false)) {
+      final int passRetry = this.jobProps.getInt("passRetry", -1);
+      if (passRetry > 0 && passRetry < this.jobProps.getInt(JOB_ATTEMPT)) {
+        generateProperties(propFiles[1]);
+        succeedJob();
+      } else {
+        failJob();
+      }
+    }
+    if (!this.succeed) {
+      throw new RuntimeException("Forced failure of " + getId());
+    }
+
+    boolean succeedAfterSleep = this.jobProps.containsKey("fail");
+
+    final long waitMillis;
+    if (succeedAfterSleep) {
+      waitMillis = this.jobProps.getInt("seconds", 10) * 1000L;
+    } else {
+      // this means that job should not exit without external interaction, so exact wait time
+      // doesn't matter. have some non-zero value to avoid busy-looping.
+      waitMillis = 10_000L;
+    }
+
+    while (this.isWaiting) {
       synchronized (this) {
-        try {
-          wait(30000);
-        } catch (InterruptedException e) {
-        }
-
-        if (!isWaiting) {
-          if (!succeed) {
-            throw new RuntimeException("Forced failure of " + getId());
-          } else {
-            info("Job " + getId() + " succeeded.");
+        if (waitMillis > 0) {
+          try {
+            wait(waitMillis);
+          } catch (final InterruptedException e) {
           }
         }
+        if (succeedAfterSleep) {
+          generateProperties(propFiles[1]);
+          succeedJob();
+        }
       }
+    }
+
+    if (!this.succeed) {
+      throw new RuntimeException("Forced failure of " + getId());
+    } else {
+      info("Job " + getId() + " succeeded.");
     }
   }
 
   public void failJob() {
     synchronized (this) {
-      succeed = false;
-      isWaiting = false;
+      this.succeed = false;
+      this.isWaiting = false;
       this.notify();
     }
   }
 
   public void succeedJob() {
     synchronized (this) {
-      succeed = true;
-      isWaiting = false;
+      this.succeed = true;
+      this.isWaiting = false;
       this.notify();
     }
   }
 
-  public void succeedJob(Props generatedProperties) {
+  public void succeedJob(final Props generatedProperties) {
     synchronized (this) {
       this.generatedProperties = generatedProperties;
-      succeed = true;
-      isWaiting = false;
+      this.succeed = true;
+      this.isWaiting = false;
       this.notify();
+    }
+  }
+
+  public void ignoreCancel() {
+    synchronized (this) {
+      this.ignoreCancel = true;
     }
   }
 
   @Override
   public Props getJobGeneratedProperties() {
-    return generatedProperties;
+    return this.generatedProperties;
   }
 
   @Override
   public void cancel() throws InterruptedException {
     info("Killing job");
-    failJob();
+    if (!this.ignoreCancel) {
+      failJob();
+    }
   }
 }

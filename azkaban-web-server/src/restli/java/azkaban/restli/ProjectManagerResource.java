@@ -15,17 +15,8 @@
  */
 package azkaban.restli;
 
-import java.io.File;
-import java.io.IOException;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.util.Map;
-
-import javax.servlet.ServletException;
-
-import org.apache.commons.io.FileUtils;
-import org.apache.log4j.Logger;
-
+import azkaban.Constants.ConfigurationKeys;
+import azkaban.flowtrigger.quartz.FlowTriggerScheduler;
 import azkaban.project.Project;
 import azkaban.project.ProjectManager;
 import azkaban.project.ProjectManagerException;
@@ -36,16 +27,25 @@ import azkaban.user.UserManagerException;
 import azkaban.utils.Props;
 import azkaban.utils.Utils;
 import azkaban.webapp.AzkabanWebServer;
-
 import com.linkedin.restli.common.HttpStatus;
+import com.linkedin.restli.server.RestLiServiceException;
 import com.linkedin.restli.server.annotations.Action;
 import com.linkedin.restli.server.annotations.ActionParam;
 import com.linkedin.restli.server.annotations.RestLiActions;
 import com.linkedin.restli.server.resources.ResourceContextHolder;
-import com.linkedin.restli.server.RestLiServiceException;
+import java.io.File;
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.Map;
+import javax.servlet.ServletException;
+import org.apache.commons.io.FileUtils;
+import org.apache.log4j.Logger;
+import org.quartz.SchedulerException;
 
 @RestLiActions(name = "project", namespace = "azkaban.restli")
 public class ProjectManagerResource extends ResourceContextHolder {
+
   private static final Logger logger = Logger
       .getLogger(ProjectManagerResource.class);
 
@@ -54,25 +54,37 @@ public class ProjectManagerResource extends ResourceContextHolder {
   }
 
   @Action(name = "deploy")
-  public String deploy(@ActionParam("sessionId") String sessionId,
-      @ActionParam("projectName") String projectName,
-      @ActionParam("packageUrl") String packageUrl)
+  public String deploy(@ActionParam("sessionId") final String sessionId,
+      @ActionParam("projectName") final String projectName,
+      @ActionParam("packageUrl") final String packageUrl)
       throws ProjectManagerException, RestLiServiceException, UserManagerException,
-      ServletException, IOException {
-    logger.info("Deploy called. {sessionId: " + sessionId + ", projectName: "
-        + projectName + ", packageUrl:" + packageUrl + "}");
+      ServletException, IOException, SchedulerException {
+    logger.info("Deploy called. {projectName: " + projectName + ", packageUrl:" + packageUrl + "}");
 
-    String ip = ResourceUtils.getRealClientIpAddr(this.getContext());
-    User user = ResourceUtils.getUserFromSessionId(sessionId, ip);
-    ProjectManager projectManager = getAzkaban().getProjectManager();
-    Project project = projectManager.getProject(projectName);
+    final String ip = ResourceUtils.getRealClientIpAddr(this.getContext());
+    final User user = ResourceUtils.getUserFromSessionId(sessionId);
+    final ProjectManager projectManager = getAzkaban().getProjectManager();
+    final Project project = projectManager.getProject(projectName);
+
+    final FlowTriggerScheduler scheduler = getAzkaban().getScheduler();
+    final boolean enableQuartz = getAzkaban().getServerProps().getBoolean(ConfigurationKeys
+        .ENABLE_QUARTZ, false);
+
+    logger.info("Deploy: reference of project " + projectName + " is " + System.identityHashCode
+        (project));
     if (project == null) {
-      String errorMsg = "Project '" + projectName + "' not found.";
+      final String errorMsg = "Project '" + projectName + "' not found.";
       throw new RestLiServiceException(HttpStatus.S_400_BAD_REQUEST, errorMsg);
     }
 
+    if (!project.isActive()) {
+      final String errorMsg =
+          "Installation Failed. Project '" + projectName + "' was already removed.";
+      throw new RestLiServiceException(HttpStatus.S_410_GONE, errorMsg);
+    }
+
     if (!ResourceUtils.hasPermission(project, user, Permission.Type.WRITE)) {
-      String errorMsg =
+      final String errorMsg =
           "User " + user.getUserId()
               + " has no permission to write to project " + project.getName();
       logger.error(errorMsg);
@@ -83,15 +95,15 @@ public class ProjectManagerResource extends ResourceContextHolder {
     URL url = null;
     try {
       url = new URL(packageUrl);
-    } catch (MalformedURLException e) {
-      String errorMsg = "URL " + packageUrl + " is malformed.";
+    } catch (final MalformedURLException e) {
+      final String errorMsg = "URL " + packageUrl + " is malformed.";
       logger.error(errorMsg, e);
       throw new RestLiServiceException(HttpStatus.S_400_BAD_REQUEST, errorMsg);
     }
 
-    String filename = getFileName(url.getFile());
-    File tempDir = Utils.createTempDir();
-    File archiveFile = new File(tempDir, filename);
+    final String filename = getFileName(url.getFile());
+    final File tempDir = Utils.createTempDir();
+    final File archiveFile = new File(tempDir, filename);
     try {
       // Since zip files can be large, don't specify an explicit read or
       // connection
@@ -101,8 +113,8 @@ public class ProjectManagerResource extends ResourceContextHolder {
       FileUtils.copyURLToFile(url, archiveFile);
 
       logger.info("Downloaded to " + archiveFile.toString());
-    } catch (IOException e) {
-      String errorMsg =
+    } catch (final IOException e) {
+      final String errorMsg =
           "Download of URL " + packageUrl + " to " + archiveFile.toString()
               + " failed";
       logger.error(errorMsg, e);
@@ -113,14 +125,27 @@ public class ProjectManagerResource extends ResourceContextHolder {
     }
 
     try {
+      if (enableQuartz) {
+        //todo chengren311: should maintain atomicity,
+        // e.g, if uploadProject fails, associated schedule shouldn't be added.
+        scheduler.unscheduleAll(project);
+      }
       // Check if project upload runs into any errors, such as the file
       // having blacklisted jars
-      Props props = new Props();
-      Map<String, ValidationReport> reports = projectManager.uploadProject(project, archiveFile, "zip", user, props);
+      final Props props = new Props();
+      final Map<String, ValidationReport> reports = projectManager
+          .uploadProject(project, archiveFile, "zip", user, props);
+
+      if (enableQuartz) {
+        scheduler.scheduleAll(project, user.getUserId());
+      }
+
       checkReports(reports);
+      logger.info("Deploy: project " + projectName + " version is " + project.getVersion()
+          + ", reference is " + System.identityHashCode(project));
       return Integer.toString(project.getVersion());
-    } catch (ProjectManagerException e) {
-      String errorMsg = "Upload of project " + project + " from " + archiveFile + " failed";
+    } catch (final ProjectManagerException | SchedulerException e) {
+      final String errorMsg = "Upload of project " + project + " from " + archiveFile + " failed";
       logger.error(errorMsg, e);
       throw e;
     } finally {
@@ -130,13 +155,13 @@ public class ProjectManagerResource extends ResourceContextHolder {
     }
   }
 
-  void checkReports(Map<String, ValidationReport> reports) throws RestLiServiceException {
-    StringBuffer errorMsgs = new StringBuffer();
-    for (Map.Entry<String, ValidationReport> reportEntry : reports.entrySet()) {
-      ValidationReport report = reportEntry.getValue();
+  void checkReports(final Map<String, ValidationReport> reports) throws RestLiServiceException {
+    final StringBuffer errorMsgs = new StringBuffer();
+    for (final Map.Entry<String, ValidationReport> reportEntry : reports.entrySet()) {
+      final ValidationReport report = reportEntry.getValue();
       if (!report.getErrorMsgs().isEmpty()) {
         errorMsgs.append("Validator " + reportEntry.getKey() + " reports errors: ");
-        for (String msg : report.getErrorMsgs()) {
+        for (final String msg : report.getErrorMsgs()) {
           errorMsgs.append(msg + System.getProperty("line.separator"));
         }
       }
@@ -146,7 +171,7 @@ public class ProjectManagerResource extends ResourceContextHolder {
     }
   }
 
-  private String getFileName(String file) {
+  private String getFileName(final String file) {
     return file.substring(file.lastIndexOf("/") + 1);
   }
 }

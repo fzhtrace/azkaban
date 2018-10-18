@@ -16,106 +16,70 @@
 
 package azkaban.execapp;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import java.io.File;
-import java.io.IOException;
-import java.util.zip.ZipFile;
 
-import org.apache.commons.io.FileUtils;
-import org.apache.log4j.Logger;
-
-import azkaban.project.ProjectFileHandler;
-import azkaban.project.ProjectLoader;
-import azkaban.project.ProjectManagerException;
-import azkaban.utils.FileIOUtils;
-import azkaban.utils.Utils;
 
 public class ProjectVersion implements Comparable<ProjectVersion> {
+
   private final int projectId;
   private final int version;
-  private File installedDir;
 
-  public ProjectVersion(int projectId, int version) {
+  private File installedDir;
+  private Long dirSize;
+
+  public ProjectVersion(final int projectId, final int version) {
+    checkArgument(projectId > 0);
+    checkArgument(version > 0);
+
     this.projectId = projectId;
     this.version = version;
   }
 
-  public ProjectVersion(int projectId, int version, File installedDir) {
-    this.projectId = projectId;
-    this.version = version;
+  public ProjectVersion(final int projectId, final int version, final File installedDir) {
+    this(projectId, version);
     this.installedDir = installedDir;
   }
 
+  public Long getDirSizeInBytes() {
+    return this.dirSize;
+  }
+
+  public void setDirSizeInBytes(final Long dirSize) {
+    this.dirSize = dirSize;
+  }
+
   public int getProjectId() {
-    return projectId;
+    return this.projectId;
   }
 
   public int getVersion() {
-    return version;
+    return this.version;
   }
 
-  public synchronized void setupProjectFiles(ProjectLoader projectLoader,
-      File projectDir, Logger logger) throws ProjectManagerException,
-      IOException {
-    String projectVersion =
-        String.valueOf(projectId) + "." + String.valueOf(version);
-    if (installedDir == null) {
-      installedDir = new File(projectDir, projectVersion);
-    }
-
-    if (!installedDir.exists()) {
-
-      logger.info("First time executing new project. Setting up in directory "
-          + installedDir.getPath());
-
-      File tempDir =
-          new File(projectDir, "_temp." + projectVersion + "."
-              + System.currentTimeMillis());
-      tempDir.mkdirs();
-      ProjectFileHandler projectFileHandler = null;
-      try {
-        projectFileHandler = projectLoader.getUploadedFile(projectId, version);
-        if ("zip".equals(projectFileHandler.getFileType())) {
-          logger.info("Downloading zip file.");
-          ZipFile zip = new ZipFile(projectFileHandler.getLocalFile());
-          Utils.unzip(zip, tempDir);
-
-          tempDir.renameTo(installedDir);
-        } else {
-          throw new IOException("The file type hasn't been decided yet.");
-        }
-      } finally {
-        if (projectFileHandler != null) {
-          projectFileHandler.deleteLocalFile();
-        }
-      }
-    }
+  public File getInstalledDir() {
+    return this.installedDir;
   }
 
-  public synchronized void copyCreateSymlinkDirectory(File executionDir)
-      throws IOException {
-    if (installedDir == null || !installedDir.exists()) {
-      throw new IOException("Installed dir doesn't exist: "
-          + ((installedDir == null) ? null : installedDir.getAbsolutePath()));
-    } else if (executionDir == null || !executionDir.exists()) {
-      throw new IOException("Execution dir doesn't exist: "
-          + ((executionDir == null) ? null : executionDir.getAbsolutePath()));
-    }
-    FileIOUtils.createDeepSymlink(installedDir, executionDir);
-  }
-
-  public synchronized void deleteDirectory() throws IOException {
-    System.out.println("Deleting old unused project versin " + installedDir);
-    if (installedDir != null && installedDir.exists()) {
-      FileUtils.deleteDirectory(installedDir);
-    }
+  public void setInstalledDir(final File installedDir) {
+    this.installedDir = installedDir;
   }
 
   @Override
-  public int compareTo(ProjectVersion o) {
-    if (projectId == o.projectId) {
-      return version - o.version;
+  public int compareTo(final ProjectVersion o) {
+    if (this.projectId == o.projectId) {
+      return this.version - o.version;
     }
 
-    return projectId - o.projectId;
+    return this.projectId - o.projectId;
+  }
+
+  @Override
+  public String toString() {
+    return "ProjectVersion{" + "projectId=" + this.projectId + ", version=" + this.version
+        + ", installedDir="
+        + this.installedDir
+        + '}';
   }
 }

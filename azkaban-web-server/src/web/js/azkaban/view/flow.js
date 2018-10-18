@@ -16,7 +16,7 @@
 
 $.namespace('azkaban');
 
-var handleJobMenuClick = function(action, el, pos) {
+var handleJobMenuClick = function (action, el, pos) {
   var jobid = el[0].jobid;
   var requestURL = contextURL + "/manager?project=" + projectName + "&flow=" +
       flowId + "&job=" + jobid;
@@ -33,10 +33,11 @@ azkaban.FlowTabView = Backbone.View.extend({
   events: {
     "click #graphViewLink": "handleGraphLinkClick",
     "click #executionsViewLink": "handleExecutionLinkClick",
+    "click #flowtriggersViewLink": "handleFlowTriggerLinkClick",
     "click #summaryViewLink": "handleSummaryLinkClick"
   },
 
-  initialize: function(settings) {
+  initialize: function (settings) {
     var selectedView = settings.selectedView;
     if (selectedView == "executions") {
       this.handleExecutionLinkClick();
@@ -46,37 +47,56 @@ azkaban.FlowTabView = Backbone.View.extend({
     }
   },
 
-  render: function() {
+  render: function () {
     console.log("render graph");
   },
 
-  handleGraphLinkClick: function(){
+  handleGraphLinkClick: function () {
     $("#executionsViewLink").removeClass("active");
     $("#graphViewLink").addClass("active");
+    $("#flowtriggersViewLink").removeClass("active");
     $('#summaryViewLink').removeClass('active');
 
-    $("#executionsView").hide();
     $("#graphView").show();
+    $("#flowtriggerView").hide();
+    $("#executionsView").hide();
     $('#summaryView').hide();
   },
 
-  handleExecutionLinkClick: function() {
+  handleExecutionLinkClick: function () {
     $("#graphViewLink").removeClass("active");
     $("#executionsViewLink").addClass("active");
+    $("#flowtriggersViewLink").removeClass("active");
     $('#summaryViewLink').removeClass('active');
 
     $("#graphView").hide();
+    $("#flowtriggerView").hide();
     $("#executionsView").show();
     $('#summaryView').hide();
     executionModel.trigger("change:view");
   },
 
-  handleSummaryLinkClick: function() {
+  handleFlowTriggerLinkClick: function () {
+    $("#graphViewLink").removeClass("active");
+    $("#executionsViewLink").removeClass("active");
+    $("#flowtriggersViewLink").addClass("active");
+    $('#summaryViewLink').removeClass('active');
+
+    $("#graphView").hide();
+    $("#flowtriggerView").show();
+    $("#executionsView").hide();
+    $('#summaryView').hide();
+    flowTriggerModel.trigger("change:view");
+  },
+
+  handleSummaryLinkClick: function () {
     $('#graphViewLink').removeClass('active');
     $('#executionsViewLink').removeClass('active');
+    $("#flowtriggersViewLink").removeClass("active");
     $('#summaryViewLink').addClass('active');
 
     $('#graphView').hide();
+    $("#flowtriggerView").hide();
     $('#executionsView').hide();
     $('#summaryView').show();
   },
@@ -91,17 +111,24 @@ azkaban.ExecutionsView = Backbone.View.extend({
     "click #pageSelection li": "handleChangePageSelection"
   },
 
-  initialize: function(settings) {
+  initialize: function (settings) {
     this.model.bind('change:view', this.handleChangeView, this);
     this.model.bind('render', this.render, this);
-    this.model.set({page: 1, pageSize: 16});
+    console.log("during initialization, pageSize: " + pageSize);
+    this.model.set({page: 1, pageSize: pageSize});
     this.model.bind('change:page', this.handlePageChange, this);
   },
 
-  render: function(evt) {
+  render: function (evt) {
     console.log("render");
     // Render page selections
-    var tbody = $("#execTableBody");
+    var content = this.model.get("content");
+    if (content == "flow") {
+      var tbody = $("#execTableBody");
+    }
+    else {
+      var tbody = $("#triggerTableBody");
+    }
     tbody.empty();
 
     var executions = this.model.get("executions");
@@ -110,8 +137,16 @@ azkaban.ExecutionsView = Backbone.View.extend({
 
       var tdId = document.createElement("td");
       var execA = document.createElement("a");
-      $(execA).attr("href", contextURL + "/executor?execid=" + executions[i].execId);
-      $(execA).text(executions[i].execId);
+      if (content == "flow") {
+        $(execA).attr("href", contextURL + "/executor?execid="
+            + executions[i].execId);
+        $(execA).text(executions[i].execId);
+      }
+      else {
+        $(execA).attr("href", contextURL + "/executor?triggerinstanceid="
+            + executions[i].instanceId);
+        $(execA).text(executions[i].instanceId);
+      }
       tdId.appendChild(execA);
       row.appendChild(tdId);
 
@@ -131,7 +166,7 @@ azkaban.ExecutionsView = Backbone.View.extend({
 
       var endTime = "-";
       var lastTime = executions[i].endTime;
-      if (executions[i].endTime != -1) {
+      if (executions[i].endTime != -1 && executions[i].endTime != 0) {
         var endDateTime = new Date(executions[i].endTime);
         endTime = getDateFormat(endDateTime);
       }
@@ -144,14 +179,19 @@ azkaban.ExecutionsView = Backbone.View.extend({
       row.appendChild(tdEndTime);
 
       var tdElapsed = document.createElement("td");
-      $(tdElapsed).text( getDuration(executions[i].startTime, lastTime));
+      $(tdElapsed).text(getDuration(executions[i].startTime, lastTime));
       row.appendChild(tdElapsed);
 
       var tdStatus = document.createElement("td");
       var status = document.createElement("div");
       $(status).addClass("status");
       $(status).addClass(executions[i].status);
-      $(status).text(statusStringMap[executions[i].status]);
+      if (content == "flow") {
+        $(status).text(statusStringMap[executions[i].status]);
+      }
+      else {
+        $(status).text(executions[i].status);
+      }
       tdStatus.appendChild(status);
       row.appendChild(tdStatus);
 
@@ -164,9 +204,9 @@ azkaban.ExecutionsView = Backbone.View.extend({
     this.renderPagination(evt);
   },
 
-  renderPagination: function(evt) {
+  renderPagination: function (evt) {
     var total = this.model.get("total");
-    total = total? total : 1;
+    total = total ? total : 1;
     var pageSize = this.model.get("pageSize");
     var numPages = Math.ceil(total / pageSize);
 
@@ -226,15 +266,15 @@ azkaban.ExecutionsView = Backbone.View.extend({
       startPage = page - 2;
     }
 
-    $("#page"+selectionPosition).addClass("active");
-    $("#page"+selectionPosition)[0].page = page;
+    $("#page" + selectionPosition).addClass("active");
+    $("#page" + selectionPosition)[0].page = page;
     var selecta = $("#page" + selectionPosition + " a");
     selecta.text(page);
     selecta.attr("href", "#page" + page);
 
     for (var j = 0; j < 5; ++j) {
       var realPage = startPage + j;
-      var elementId = "#page" + (j+1);
+      var elementId = "#page" + (j + 1);
 
       $(elementId)[0].page = realPage;
       var a = $(elementId + " a");
@@ -243,15 +283,15 @@ azkaban.ExecutionsView = Backbone.View.extend({
     }
   },
 
-  handleChangePageSelection: function(evt) {
+  handleChangePageSelection: function (evt) {
     if ($(evt.currentTarget).hasClass("disabled")) {
       return;
     }
-    var page = evt.currentTarget.page;
+    var page = evt.currentTarget.innerText;
     this.model.set({"page": page});
   },
 
-  handleChangeView: function(evt) {
+  handleChangeView: function (evt) {
     if (this.init) {
       return;
     }
@@ -260,21 +300,31 @@ azkaban.ExecutionsView = Backbone.View.extend({
     this.init = true;
   },
 
-  handlePageChange: function(evt) {
+  handlePageChange: function (evt) {
     var page = this.model.get("page") - 1;
     var pageSize = this.model.get("pageSize");
-    var requestURL = contextURL + "/manager";
+    console.log("pageSize = " + pageSize)
+    var content = this.model.get("content");
+    if (content == 'flow') {
+      requestURL = contextURL + "/manager";
+    }
+    else {
+      requestURL = contextURL + "/flowtriggerinstance";
+    }
 
     var model = this.model;
     var requestData = {
       "project": projectName,
       "flow": flowId,
-      "ajax": "fetchFlowExecutions",
+      "ajax": content == 'flow' ? "fetchFlowExecutions"
+          : "fetchTriggerInstances",
       "start": page * pageSize,
       "length": pageSize
     };
-    var successHandler = function(data) {
+
+    var successHandler = function (data) {
       model.set({
+        "content": content,
         "executions": data.executions,
         "total": data.total
       });
@@ -290,16 +340,17 @@ azkaban.SummaryView = Backbone.View.extend({
     'click #analyze-btn': 'fetchLastRun'
   },
 
-  initialize: function(settings) {
+  initialize: function (settings) {
     this.model.bind('change:view', this.handleChangeView, this);
     this.model.bind('render', this.render, this);
 
     this.fetchDetails();
     this.fetchSchedule();
+    this.fetchFlowTrigger();
     this.model.trigger('render');
   },
 
-  fetchDetails: function() {
+  fetchDetails: function () {
     var requestURL = contextURL + "/manager";
     var requestData = {
       'ajax': 'fetchflowdetails',
@@ -309,17 +360,18 @@ azkaban.SummaryView = Backbone.View.extend({
 
     var model = this.model;
 
-    var successHandler = function(data) {
+    var successHandler = function (data) {
       console.log(data);
       model.set({
-        'jobTypes': data.jobTypes
+        'jobTypes': data.jobTypes,
+        'condition': data.condition
       });
       model.trigger('render');
     };
     $.get(requestURL, requestData, successHandler, 'json');
   },
 
-  fetchSchedule: function() {
+  fetchSchedule: function () {
     var requestURL = contextURL + "/schedule"
     var requestData = {
       'ajax': 'fetchSchedule',
@@ -328,7 +380,7 @@ azkaban.SummaryView = Backbone.View.extend({
     };
     var model = this.model;
     var view = this;
-    var successHandler = function(data) {
+    var successHandler = function (data) {
       model.set({'schedule': data.schedule});
       model.trigger('render');
       view.fetchSla();
@@ -336,7 +388,7 @@ azkaban.SummaryView = Backbone.View.extend({
     $.get(requestURL, requestData, successHandler, 'json');
   },
 
-  fetchSla: function() {
+  fetchSla: function () {
     var schedule = this.model.get('schedule');
     if (schedule == null || schedule.scheduleId == null) {
       return;
@@ -348,7 +400,7 @@ azkaban.SummaryView = Backbone.View.extend({
       "ajax": "slaInfo"
     };
     var model = this.model;
-    var successHandler = function(data) {
+    var successHandler = function (data) {
       if (data == null || data.settings == null || data.settings.length == 0) {
         return;
       }
@@ -359,7 +411,7 @@ azkaban.SummaryView = Backbone.View.extend({
     $.get(requestURL, requestData, successHandler, 'json');
   },
 
-  fetchLastRun: function() {
+  fetchLastRun: function () {
     var requestURL = contextURL + "/manager";
     var requestData = {
       'ajax': 'fetchLastSuccessfulFlowExecution',
@@ -367,9 +419,9 @@ azkaban.SummaryView = Backbone.View.extend({
       'flow': flowId
     };
     var view = this;
-    var successHandler = function(data) {
+    var successHandler = function (data) {
       if (data.success == "false" || data.execId == null) {
-        dust.render("flowstats-no-data", data, function(err, out) {
+        dust.render("flowstats-no-data", data, function (err, out) {
           $('#flow-stats-container').html(out);
         });
         return;
@@ -379,17 +431,35 @@ azkaban.SummaryView = Backbone.View.extend({
     $.get(requestURL, requestData, successHandler, 'json');
   },
 
-  handleChangeView: function(evt) {
+  fetchFlowTrigger: function () {
+    var requestURL = contextURL + "/flowtrigger"
+    var requestData = {
+      'ajax': 'fetchTrigger',
+      'projectId': projectId,
+      'flowId': flowId
+    };
+    var model = this.model;
+    var view = this;
+    var successHandler = function (data) {
+      model.set({'flowtrigger': data.flowTrigger});
+      model.trigger('render');
+    };
+    $.get(requestURL, requestData, successHandler, 'json');
   },
 
-  render: function(evt) {
+  handleChangeView: function (evt) {
+  },
+
+  render: function (evt) {
     var data = {
       projectName: projectName,
       flowName: flowId,
-          jobTypes: this.model.get('jobTypes'),
+      jobTypes: this.model.get('jobTypes'),
+      condition: this.model.get('condition'),
       schedule: this.model.get('schedule'),
+      flowtrigger: this.model.get('flowtrigger'),
     };
-    dust.render("flowsummary", data, function(err, out) {
+    dust.render("flowsummary", data, function (err, out) {
       $('#summary-view-content').html(out);
     });
   },
@@ -401,6 +471,9 @@ var mainSvgGraphView;
 var executionModel;
 azkaban.ExecutionModel = Backbone.Model.extend({});
 
+var flowTriggerModel;
+azkaban.FlowTriggerModel = Backbone.Model.extend({});
+
 var summaryModel;
 azkaban.SummaryModel = Backbone.Model.extend({});
 
@@ -410,13 +483,21 @@ var flowStatsModel;
 var executionsTimeGraphView;
 var slaView;
 
-$(function() {
+$(function () {
   var selected;
   // Execution model has to be created before the window switches the tabs.
   executionModel = new azkaban.ExecutionModel();
+  executionModel.set("content", "flow");
   executionsView = new azkaban.ExecutionsView({
     el: $('#executionsView'),
     model: executionModel
+  });
+
+  flowTriggerModel = new azkaban.ExecutionModel();
+  flowTriggerModel.set("content", "trigger");
+  flowTriggerView = new azkaban.ExecutionsView({
+    el: $('#flowtriggerView'),
+    model: flowTriggerModel
   });
 
   summaryModel = new azkaban.SummaryModel();
@@ -459,11 +540,11 @@ $(function() {
     modelField: 'executions'
   });
 
-  slaView = new azkaban.ChangeSlaView({el:$('#sla-options')});
+  slaView = new azkaban.ChangeSlaView({el: $('#sla-options')});
 
   var requestURL = contextURL + "/manager";
   // Set up the Flow options view. Create a new one every time :p
-  $('#executebtn').click(function() {
+  $('#executebtn').click(function () {
     var data = graphModel.get("data");
     var nodes = data.nodes;
     var executingData = {
@@ -480,7 +561,7 @@ $(function() {
     "ajax": "fetchflowgraph",
     "flow": flowId
   };
-  var successHandler = function(data) {
+  var successHandler = function (data) {
     console.log("data fetched");
     graphModel.addFlow(data);
     graphModel.trigger("change:graph");
@@ -494,7 +575,11 @@ $(function() {
       if (hash == "#summary") {
         flowTabView.handleSummaryLinkClick();
       }
-      else if (hash == "#graph") {
+      if (hash == "#flowtriggers") {
+        flowTabView.handleFlowTriggerLinkClick();
+      }
+
+      if (hash == "#graph") {
         // Redundant, but we may want to change the default.
         selected = "graph";
       }

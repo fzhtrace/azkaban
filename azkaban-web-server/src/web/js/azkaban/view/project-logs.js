@@ -25,11 +25,12 @@ var typeMapping = {
   "ERROR": "Error",
   "CREATED": "Project Created",
   "DELETED": "Project Deleted",
-  "USER_PERMISSION" : "User Permission",
-  "GROUP_PERMISSION" : "Group Permission",
-  "DESCRIPTION" : "Description Set",
+  "USER_PERMISSION": "User Permission",
+  "GROUP_PERMISSION": "Group Permission",
+  "DESCRIPTION": "Description Set",
   "SCHEDULE": "Schedule",
-  "UPLOADED": "Uploaded"
+  "UPLOADED": "Uploaded",
+  "PROPERTY_OVERRIDE": "Property Override"
 };
 
 var projectLogView;
@@ -38,12 +39,12 @@ azkaban.ProjectLogView = Backbone.View.extend({
     "click #updateLogBtn": "handleUpdate"
   },
 
-  initialize: function(settings) {
+  initialize: function (settings) {
     this.model.set({"current": 0});
     this.handleUpdate();
   },
 
-  handleUpdate: function(evt) {
+  handleUpdate: function (evt) {
     var current = this.model.get("current");
     var requestURL = contextURL + "/manager";
     var model = this.model;
@@ -54,7 +55,7 @@ azkaban.ProjectLogView = Backbone.View.extend({
       "skip": 0
     };
 
-    var successHandler = function(data) {
+    var successHandler = function (data) {
       console.log("fetchLogs");
       if (data.error) {
         showDialog("Error", data.error);
@@ -63,7 +64,7 @@ azkaban.ProjectLogView = Backbone.View.extend({
       // Get the columns to map to the values.
       var columns = data.columns;
       var columnMap = {};
-      for (var i =0; i < columns.length; ++i) {
+      for (var i = 0; i < columns.length; ++i) {
         columnMap[columns[i]] = i;
       }
       var logSection = $("#logTable").find("tbody")[0];
@@ -88,13 +89,20 @@ azkaban.ProjectLogView = Backbone.View.extend({
         $(containerUser).text(user);
 
         var containerType = document.createElement("td");
+        var containerMessage = document.createElement("td");
+
+        // If the event is a property override change, highlight by red color.
+        if (type == "PROPERTY_OVERRIDE") {
+          $(containerMessage).css("color", "red");
+          $(containerMessage).css("white-space", "pre-wrap");
+          $(containerType).css("color", "red");
+        }
+
         $(containerType).addClass("type");
         $(containerType).addClass(type);
         $(containerType).text(typeMapping[type] ? typeMapping[type] : type);
 
-        var containerMessage = document.createElement("td");
-        $(containerMessage).addClass("message");
-        $(containerMessage).text(message);
+        $(containerMessage).html(message);
 
         $(containerEvent).append(containerTime);
         $(containerEvent).append(containerUser);
@@ -110,7 +118,7 @@ azkaban.ProjectLogView = Backbone.View.extend({
   }
 });
 
-var showDialog = function(title, message) {
+var showDialog = function (title, message) {
   $('#messageTitle').text(title);
 
   $('#messageBox').text(message);
@@ -120,18 +128,18 @@ var showDialog = function(title, message) {
     position: ["20%",],
     containerId: 'confirm-container',
     containerCss: {
-    'height': '220px',
-    'width': '565px'
+      'height': '220px',
+      'width': '565px'
     },
     onShow: function (dialog) {
     }
   });
 }
 
-
-$(function() {
+$(function () {
   var selected;
 
   logModel = new azkaban.LogModel();
-  projectLogView = new azkaban.ProjectLogView({el:$('#projectLogView'), model: logModel});
+  projectLogView = new azkaban.ProjectLogView(
+      {el: $('#projectLogView'), model: logModel});
 });
